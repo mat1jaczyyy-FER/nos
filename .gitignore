@@ -1,4 +1,18 @@
+# ignore extensionless
 *
-!*.gitignore
-!*.gitattributes
-!*.c
+!/**/
+!*.*
+
+# reintroduce kernel module loaders and makefiles
+!*load_*
+!Makefile
+
+# kernel module temps
+*.ko
+*.symvers
+*.mod*
+*.o
+*.order
+*.cmd
+
+.vscode
