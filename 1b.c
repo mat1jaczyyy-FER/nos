@@ -124,6 +124,27 @@ void queue_log(int id, waiting* q, int s) {
     printf("\n");
 }
 
+int queue_topmost(waiting* q, int s) {
+    int min = 0;
+    for (int i = 1; i < s; i++) {
+        if (q[i].ts < q[min].ts) {
+            min = i;
+        }
+    }
+    return min;
+}
+
+int queue_topmost_for_id(waiting* q, int s, int id) {
+    int min = 0;
+    for (int i = 1; i < s; i++) {
+        if (q[i].id != id) continue;
+        if (q[i].ts < q[min].ts) {
+            min = i;
+        }
+    }
+    return min;
+}
+
 pipe_t tp;
 
 void* qthread(void* arg) {
@@ -163,27 +184,33 @@ void* qthread(void* arg) {
         } else if (msg.type == WAIT_FOR_TOP) {
             if (msg.sender != id) continue;
 
-            if (q[0].id == id) {
+            // this check was previously incorrect, used (q[0].id == id) -2 pts
+            int top = queue_topmost(q, s);
+
+            if (q[top].id == id) {
                 msg.type = ON_TOP;
                 write(tp.w, &msg, sizeof(msg));
-                write(tp.w, &q[0].ts, sizeof(q[0].ts));
+                write(tp.w, &q[top].ts, sizeof(q[top].ts));
 
             } else {
                 notify_on_top = 1;
             }
 
         } else if (msg.type == CS_RELEASE) {
-            memcpy(q, q + 1, sizeof(q[0]) * --s);
+            int remove = queue_topmost_for_id(q, s, msg.sender);
+            memcpy(q + remove, q + remove + 1, sizeof(waiting) * (--s - remove));
             
             #if defined(LOG_QUEUE) || defined(LOG_RELEASE)
                 queue_log(id, q, s);
             #endif
 
-            if (notify_on_top && q[0].id == id) {
+            int top = queue_topmost(q, s);
+
+            if (notify_on_top && q[top].id == id) {
                 msg.sender = id;
                 msg.type = ON_TOP;
                 write(tp.w, &msg, sizeof(msg));
-                write(tp.w, &q[0].ts, sizeof(q[0].ts));
+                write(tp.w, &q[top].ts, sizeof(q[top].ts));
                 notify_on_top = 0;
             }
         
@@ -269,6 +296,11 @@ int child(int id) {
 
 int main(int argc, char* argv[]) {
     start = get_time();
+
+    if (argc < 2) {
+        fprintf(stderr, "Usage: %s N\n", argv[0]);
+        exit(0);
+    }
 
     N = atoi(argv[1]);
     
