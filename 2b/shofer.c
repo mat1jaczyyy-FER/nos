@@ -46,6 +46,7 @@ static struct shofer_timer {
 	struct timer_list timer;
 	struct buffer *in_buff;
 	struct buffer *out_buff;
+	struct wait_queue_head *rq;
 } timer;
 
 /* prototypes */
@@ -115,12 +116,15 @@ static int __init shofer_module_init(void)
 	control_dev = shofer_create(devno, &control_fops, in_buff, out_buff, &retval);
 	devno = MKDEV(MAJOR(devno), MINOR(devno) + 1);
 	output_dev = shofer_create(devno, &output_fops, NULL, out_buff, &retval);
+	/* for poll */
+	init_waitqueue_head(&output_dev->rq);
 	if (!input_dev || !control_dev || !output_dev)
 		goto no_driver;
 
 	/* Create timer */
 	timer.in_buff = in_buff;
 	timer.out_buff = out_buff;
+	timer.rq = &output_dev->rq;
 	timer_setup(&timer.timer, timer_function, 0);
 	timer.timer.expires = jiffies + msecs_to_jiffies(TIMER_PERIOD);
 	add_timer(&timer.timer);
@@ -279,7 +283,7 @@ static ssize_t shofer_read(struct file *filp, char __user *ubuf, size_t count,
 
 	spin_lock(&out_buff->key);
 
-	dump_buffer("out_dev-end:out_buff:", out_buff);
+	dump_buffer("out_dev-start:out_buff:", out_buff);
 
 	retval = kfifo_to_user(fifo, (char __user *) ubuf, count, &copied);
 	if (retval)
@@ -290,6 +294,8 @@ static ssize_t shofer_read(struct file *filp, char __user *ubuf, size_t count,
 	dump_buffer("out_dev-end:out_buff:", out_buff);
 
 	spin_unlock(&out_buff->key);
+
+	wake_up_all(&shofer->rq); /* for poll */
 
 	return retval;
 }
@@ -302,7 +308,11 @@ static unsigned int shofer_poll(struct file *filp, poll_table *wait)
 	unsigned int len = kfifo_len(fifo);
 	unsigned int mask = 0;
 
+	dump_buffer("poll-start:out_buff:", out_buff);
+
 	poll_wait(filp, &shofer->rq, wait);
+
+	dump_buffer("poll-end:out_buff:", out_buff);
 
 	if (len)
 		mask |= POLLIN | POLLRDNORM; /* readable */
@@ -324,7 +334,7 @@ static ssize_t shofer_write(struct file *filp, const char __user *ubuf,
 
 	spin_lock(&in_buff->key);
 
-	dump_buffer("in_dev-end:in_buff:", in_buff);
+	dump_buffer("in_dev-start:in_buff:", in_buff);
 
 	retval = kfifo_from_user(fifo, (char __user *) ubuf, count, &copied);
 	if (retval)
@@ -351,8 +361,10 @@ static long control_ioctl (struct file *filp, unsigned int cmd, unsigned long ar
 	int got;
 	int _;
 
-	if (!cmd)
+	if (cmd != 0)
 		return -EINVAL;
+
+	LOG("ioctl: cmd=%d, arg=%ld", cmd, arg);
 
 	/* copy cmd bytes from in_buff to out_buff */
 	/* todo (similar to timer) */
@@ -361,30 +373,34 @@ static long control_ioctl (struct file *filp, unsigned int cmd, unsigned long ar
 	spin_lock(&out_buff->key);
 	spin_lock(&in_buff->key);
 
-	dump_buffer("timer-start:in_buff", in_buff);
-	dump_buffer("timer-start:out_buff", out_buff);
+	dump_buffer("ioctl-start:in_buff", in_buff);
+	dump_buffer("ioctl-start:out_buff", out_buff);
 
-	for (_ = 0; _ < cmd; _++) {
-		if (kfifo_len(fifo_in) > 0 && kfifo_avail(fifo_out) > 0) {
-			got = kfifo_get(fifo_in, &c);
-			if (got > 0) {
-				got = kfifo_put(fifo_out, c);
-				if (got)
-					LOG("timer moved '%c' from in to out", c);
-				else /* should't happen! */
-					klog(KERN_WARNING, "kfifo_put failed\n");
-			}
-			else { /* should't happen! */
-				klog(KERN_WARNING, "kfifo_get failed\n");
+	if (cmd == 0) { // Advance buffer message
+		for (_ = 0; _ < arg; _++) {
+			if (kfifo_len(fifo_in) > 0 && kfifo_avail(fifo_out) > 0) {
+				got = kfifo_get(fifo_in, &c);
+				if (got > 0) {
+					got = kfifo_put(fifo_out, c);
+					if (got)
+						LOG("ioctl moved '%c' from in to out", c);
+					else /* should't happen! */
+						klog(KERN_WARNING, "kfifo_put failed\n");
+				}
+				else { /* should't happen! */
+					klog(KERN_WARNING, "kfifo_get failed\n");
+				}
 			}
 		}
 	}
 
-	dump_buffer("timer-end:in_buff", in_buff);
-	dump_buffer("timer-end:out_buff", out_buff);
+	dump_buffer("ioctl-end:in_buff", in_buff);
+	dump_buffer("ioctl-end:out_buff", out_buff);
 
 	spin_unlock(&in_buff->key);
 	spin_unlock(&out_buff->key);
+
+	wake_up_all(&output_dev->rq); /* for poll */
 
 	return retval;
 }
@@ -429,6 +445,8 @@ static void timer_function(struct timer_list *t)
 
 	spin_unlock(&in_buff->key);
 	spin_unlock(&out_buff->key);
+
+	wake_up_all(timer->rq); /* for poll */
 
 	/* reschedule timer for period */
 	mod_timer(t, jiffies + msecs_to_jiffies(TIMER_PERIOD));
