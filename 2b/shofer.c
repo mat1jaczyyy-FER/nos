@@ -21,6 +21,7 @@
 #include <linux/log2.h>
 #include <linux/ioctl.h>
 #include <linux/timer.h>
+#include <linux/poll.h>
 
 #include "config.h"
 
@@ -61,6 +62,7 @@ static int shofer_open_read(struct inode *inode, struct file *filp);
 static int shofer_open_write(struct inode *inode, struct file *filp);
 static ssize_t shofer_read(struct file *, char __user *, size_t, loff_t *);
 static ssize_t shofer_write(struct file *, const char __user *, size_t, loff_t *);
+static unsigned int shofer_poll(struct file *filp, poll_table *wait);
 static long control_ioctl (struct file *, unsigned int, unsigned long);
 
 static struct file_operations input_fops = {
@@ -72,7 +74,8 @@ static struct file_operations input_fops = {
 static struct file_operations output_fops = {
 	.owner =    THIS_MODULE,
 	.open =     shofer_open_read,
-	.read =     shofer_read
+	.read =     shofer_read,
+	.poll =     shofer_poll
 };
 
 static struct file_operations control_fops = {
@@ -291,6 +294,22 @@ static ssize_t shofer_read(struct file *filp, char __user *ubuf, size_t count,
 	return retval;
 }
 
+static unsigned int shofer_poll(struct file *filp, poll_table *wait)
+{
+	struct shofer_dev *shofer = filp->private_data;
+	struct buffer *out_buff = shofer->out_buff;
+	struct kfifo *fifo = &out_buff->fifo;
+	unsigned int len = kfifo_len(fifo);
+	unsigned int mask = 0;
+
+	poll_wait(filp, &shofer->rq, wait);
+
+	if (len)
+		mask |= POLLIN | POLLRDNORM; /* readable */
+
+	return mask;
+}
+
 /* input_dev only */
 static ssize_t shofer_write(struct file *filp, const char __user *ubuf,
 	size_t count, loff_t *f_pos)
@@ -305,7 +324,7 @@ static ssize_t shofer_write(struct file *filp, const char __user *ubuf,
 
 	spin_lock(&in_buff->key);
 
-	dump_buffer("out_dev-end:in_buff:", in_buff);
+	dump_buffer("in_dev-end:in_buff:", in_buff);
 
 	retval = kfifo_from_user(fifo, (char __user *) ubuf, count, &copied);
 	if (retval)
@@ -313,7 +332,7 @@ static ssize_t shofer_write(struct file *filp, const char __user *ubuf,
 	else
 		retval = copied;
 
-	dump_buffer("out_dev-end:in_buff:", in_buff);
+	dump_buffer("in_dev-end:in_buff:", in_buff);
 
 	spin_unlock(&in_buff->key);
 
@@ -358,11 +377,6 @@ static long control_ioctl (struct file *filp, unsigned int cmd, unsigned long ar
 			else { /* should't happen! */
 				klog(KERN_WARNING, "kfifo_get failed\n");
 			}
-		}
-		else {
-			LOG("timer: nothing in input buffer");
-			//for test: put '#' in output buffer
-			got = kfifo_put(fifo_out, '#');
 		}
 	}
 

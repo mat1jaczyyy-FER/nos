@@ -32,6 +32,8 @@ struct shofer_dev {
 	struct cdev cdev;		/* Char device structure */
 	struct buffer *in_buff;		/* Pointer to input buffer */
 	struct buffer *out_buff;	/* Pointer to output buffer */
+
+	struct wait_queue_head rq; /* for poll */
 };
 
 #define klog(LEVEL, format, ...)	\
