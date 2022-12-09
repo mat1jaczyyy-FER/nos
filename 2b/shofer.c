@@ -361,7 +361,7 @@ static long control_ioctl (struct file *filp, unsigned int cmd, unsigned long ar
 	int got;
 	int _;
 
-	if (cmd != 0)
+	if (cmd > 100)
 		return -EINVAL;
 
 	LOG("ioctl: cmd=%d, arg=%ld", cmd, arg);
@@ -376,20 +376,18 @@ static long control_ioctl (struct file *filp, unsigned int cmd, unsigned long ar
 	dump_buffer("ioctl-start:in_buff", in_buff);
 	dump_buffer("ioctl-start:out_buff", out_buff);
 
-	if (cmd == 0) { // Advance buffer message
-		for (_ = 0; _ < arg; _++) {
-			if (kfifo_len(fifo_in) > 0 && kfifo_avail(fifo_out) > 0) {
-				got = kfifo_get(fifo_in, &c);
-				if (got > 0) {
-					got = kfifo_put(fifo_out, c);
-					if (got)
-						LOG("ioctl moved '%c' from in to out", c);
-					else /* should't happen! */
-						klog(KERN_WARNING, "kfifo_put failed\n");
-				}
-				else { /* should't happen! */
-					klog(KERN_WARNING, "kfifo_get failed\n");
-				}
+	for (_ = 0; _ < cmd; _++) {
+		if (kfifo_len(fifo_in) > 0 && kfifo_avail(fifo_out) > 0) {
+			got = kfifo_get(fifo_in, &c);
+			if (got > 0) {
+				got = kfifo_put(fifo_out, c);
+				if (got)
+					LOG("ioctl moved '%c' from in to out", c);
+				else /* should't happen! */
+					klog(KERN_WARNING, "kfifo_put failed\n");
+			}
+			else { /* should't happen! */
+				klog(KERN_WARNING, "kfifo_get failed\n");
 			}
 		}
 	}
