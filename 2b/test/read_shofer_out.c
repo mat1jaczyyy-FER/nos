@@ -1,3 +1,4 @@
+// Dominik Matijaca 0036524568
 #include <fcntl.h>
 #include <poll.h>
 #include <stdio.h>

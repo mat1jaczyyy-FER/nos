@@ -13,7 +13,7 @@
 
 #define DRIVER_NAME 	"shofer"
 
-#define AUTHOR		"Leonardo Jelenkovic"
+#define AUTHOR		"Dominik Matijaca"
 #define LICENSE		"Dual BSD/GPL"
 
 #define BUFFER_SIZE	64
