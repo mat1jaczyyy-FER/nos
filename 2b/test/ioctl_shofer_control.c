@@ -16,14 +16,11 @@ int main(int argc, char** argv)  {
 		return 1;
 	}
 
-	printf("a %ld\n", argp);
-
 	int fd = open("/dev/shofer_control", O_RDONLY);
 	if (fd < 0) {
 		perror("open /dev/shofer_control");
 		return 1;
 	}
-	printf("b %d %ld\n", fd, argp);
 
 	int count = ioctl(fd, 0, argp);
 	if (count < 0) {
