@@ -1,4 +1,4 @@
-X=tester
+X=test1 test2 clear
 
 all: $(X)
 

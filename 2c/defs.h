@@ -3,4 +3,4 @@
 
 #define MAX_MESSAGES 4
 #define MESSAGE_SIZE 64
-#define MAX_THREADS	 2
+#define MAX_THREADS	 4

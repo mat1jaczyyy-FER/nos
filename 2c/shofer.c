@@ -31,11 +31,13 @@ MODULE_PARM_DESC(max_threads, "Maximum number of threads that can read/write sim
 
 struct shofer_dev *Shofer = NULL;
 struct buffer *Buffer = NULL;
+char* Fifo_print_data = NULL;
 static dev_t Dev_no = 0;
 
 /* prototypes */
-static struct buffer *buffer_create(size_t, int *);
-static void buffer_delete(struct buffer *);
+static void *buffer_create(size_t, int *);
+static struct buffer *fifo_create(size_t, int *);
+static void buffer_delete(void *);
 static struct shofer_dev *shofer_create(dev_t, struct file_operations *,
 	struct buffer *, int *);
 static void shofer_delete(struct shofer_dev *);
@@ -60,6 +62,7 @@ static int __init shofer_module_init(void)
 {
 	int retval;
 	struct buffer *buffer;
+	char *fifo_print_data;
 	struct shofer_dev *shofer;
 	dev_t dev_no = 0;
 
@@ -86,10 +89,16 @@ static int __init shofer_module_init(void)
 
 	/* create a buffer */
 	// buffer_size is now guaranteed to be a power of two
-	buffer = buffer_create(buffer_size, &retval);
+	buffer = fifo_create(buffer_size, &retval);
 	if (!buffer)
 		goto no_driver;
 	Buffer = buffer;
+
+	/* create a buffer for printing */
+	fifo_print_data = (char*)buffer_create(buffer_size, &retval);
+	if (!fifo_print_data)
+		goto no_driver;
+	Fifo_print_data = fifo_print_data;
 
 	/* create a device */
 	shofer = shofer_create(dev_no, &shofer_fops, buffer, &retval);
@@ -115,6 +124,8 @@ static void cleanup(void) {
 		shofer_delete(Shofer);
 	if (Buffer)
 		buffer_delete(Buffer);
+	if (Fifo_print_data)
+		buffer_delete(Fifo_print_data);
 	if (Dev_no)
 		unregister_chrdev_region(Dev_no, 1);
 }
@@ -131,12 +142,23 @@ module_init(shofer_module_init);
 module_exit(shofer_module_exit);
 
 /* Create and initialize a single buffer */
-static struct buffer *buffer_create(size_t size, int *retval)
+static void *buffer_create(size_t size, int *retval)
 {
-	struct buffer *buffer = kmalloc(sizeof(struct buffer) + size, GFP_KERNEL);
+	void *buffer = kmalloc(size, GFP_KERNEL);
 	if (!buffer) {
 		*retval = -ENOMEM;
 		printk(KERN_NOTICE "shofer:kmalloc failed\n");
+		return NULL;
+	}
+	*retval = 0;
+
+	return buffer;
+}
+
+static struct buffer *fifo_create(size_t size, int *retval)
+{
+	struct buffer *buffer = buffer_create(sizeof(struct buffer) + size, retval);
+	if (*retval != 0) {
 		return NULL;
 	}
 	*retval = kfifo_init(&buffer->fifo, buffer + 1, size);
@@ -151,7 +173,7 @@ static struct buffer *buffer_create(size_t size, int *retval)
 	return buffer;
 }
 
-static void buffer_delete(struct buffer *buffer)
+static void buffer_delete(void *buffer)
 {
 	kfree(buffer);
 }
@@ -202,7 +224,12 @@ static int shofer_open(struct inode *inode, struct file *filp)
 		return -EINVAL;
 
 	shofer = container_of(inode->i_cdev, struct shofer_dev, cdev);
+
+	if (shofer->threads_active >= max_threads)
+		return -EBUSY;
+	
 	filp->private_data = shofer; /* for other methods */
+	shofer->threads_active++;
 
 	return 0;
 }
@@ -210,7 +237,10 @@ static int shofer_open(struct inode *inode, struct file *filp)
 /* Called when a process performs "close" operation */
 static int shofer_release(struct inode *inode, struct file *filp)
 {
-	return 0; /* nothing to do; could not set this function in fops */
+	struct shofer_dev *shofer = filp->private_data;
+	shofer->threads_active--;
+
+	return 0;
 }
 
 /* Read count bytes from buffer to user space ubuf */
@@ -248,6 +278,8 @@ static ssize_t shofer_read(struct file *filp, char __user *ubuf, size_t count,
 	dump_buffer("read-end", buffer);
 
 	spin_unlock(&buffer->key);
+
+	wake_up_interruptible(&shofer->writers_waiting);
 
 	return retval;
 }
@@ -288,14 +320,23 @@ static ssize_t shofer_write(struct file *filp, const char __user *ubuf,
 
 	spin_unlock(&buffer->key);
 
+	wake_up_interruptible(&shofer->readers_waiting);
+
 	return retval;
 }
 
 static void dump_buffer(char *prefix, struct buffer *b)
 {
-	printk(KERN_NOTICE "shofer:%s:size=%u:contains=%u:buf=\n",
-		prefix, kfifo_size(&b->fifo), kfifo_len(&b->fifo));
+	unsigned int i;
+	int len = kfifo_len(&b->fifo);
+	size_t copied;
 
-	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-		b + 1, kfifo_len(&b->fifo));
+	printk(KERN_NOTICE "shofer:%s:fifo:size=%u:contains=%u",
+		prefix, kfifo_size(&b->fifo), len);
+	
+	copied = kfifo_out_peek(&b->fifo, Fifo_print_data, len);
+
+	for (i = 0; i < len; i += message_size)
+		printk(KERN_NOTICE "shofer:%s:fifo:[%u:%u]=%s",
+			prefix, i, i + message_size - 1, Fifo_print_data + i);
 }
