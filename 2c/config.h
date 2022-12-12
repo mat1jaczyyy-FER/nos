@@ -6,9 +6,7 @@
 #define AUTHOR		"Dominik Matijaca"
 #define LICENSE		"Dual BSD/GPL"
 
-#define MAX_MESSAGES 4
-#define MESSAGE_SIZE 64
-#define MAX_THREADS	 2
+#include "defs.h"
 
 /* Circular buffer */
 struct buffer {
