@@ -116,10 +116,11 @@ static int __init shofer_module_init(void)
 	control_dev = shofer_create(devno, &control_fops, in_buff, out_buff, &retval);
 	devno = MKDEV(MAJOR(devno), MINOR(devno) + 1);
 	output_dev = shofer_create(devno, &output_fops, NULL, out_buff, &retval);
-	/* for poll */
-	init_waitqueue_head(&output_dev->rq);
 	if (!input_dev || !control_dev || !output_dev)
 		goto no_driver;
+		
+	/* for poll */
+	init_waitqueue_head(&output_dev->rq);
 
 	/* Create timer */
 	timer.in_buff = in_buff;
